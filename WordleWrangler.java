@@ -242,7 +242,6 @@ public class WordleWrangler {
 
             // Finally, add the word to the output list, if it hasn't been tried yet.
             if (!word.equals(tried)) output.add(word);
-            if (output.size() >= maxWordsToDisplay) break wordLoop;
         }
 
         possibleWords = new HashSet<>(output);
