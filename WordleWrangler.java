@@ -2,23 +2,29 @@
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.security.InvalidParameterException;
-import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Scanner;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class WordleWrangler {
 
     private int wordLength;
     private LetterSlot[] letterSlots;
-    private List<Character> invalidCharacters = new ArrayList<>(21);
-    private List<String> invalidWords = new ArrayList<>(6);
+    private int maxWordsToDisplay = 100;
+
+    // The LetterHolder remembers which letters have been invalidated, and it handles cases
+    // for when there are two of the same letters, but only one is valid.
+    private LetterHolder letterHolder = new LetterHolder();
+    private Set<String> invalidWords = new HashSet<>(12);
+    private Set<String> possibleWords = new HashSet<>(maxWordsToDisplay * 2);
     private List<String> words;
     private int attemptCount;
     private String[] ordinals = {" ", "first", "second", "third", "fourth", "fifth", "sixth"};
-    private String dictionaryFilename = "eng_words_alphabetic.txt";
+    private String dictionaryFilename = "eng_words_69k.txt";
+    
 
     public WordleWrangler() {
         this(5);
@@ -49,30 +55,71 @@ public class WordleWrangler {
         WordleWrangler ww = new WordleWrangler();
         ConsoleColors cc = new ConsoleColors();
 
+        int length = ww.wordLength;
+
         Scanner scanner = new Scanner(System.in);
 
-        System.out.println("Thanks for trying the Wordle Wrangler!\n");
-        System.out.println("Just type the word you tried, then a space, and then the result.");
-        System.out.println("Type '?' in place of a " + cc.WHITE_UNDERLINED + "gray letter" + cc.RESET + 
-            ", type in lowercase for a " + cc.YELLOW + "yellow letter" + cc.RESET + 
-            ", and type in UPPERCASE for a " + cc.GREEN + "green letter" + cc.RESET);
-        System.out.println("For example: if you entered 'ocean' into Wordle and got o" + cc.YELLOW + "c" + cc.RESET + cc.GREEN + "ea" + cc.RESET + 
-            "n, then you would type: ocean ?cEA?\n");
-        System.out.println("Good luck!\n");
+        System.out.println("\nThanks for trying the Wordle Wrangler!\n");
+        System.out.println("First, I will ask you to type the word you tried,\nthen I will ask you to type the result.\nYou'll see word suggestions after that!\n");
+        System.out.println("For typing in the result:\n  use '?' in place of a " + cc.WHITE_UNDERLINED + "gray letter" + cc.RESET + 
+            "\n  type in lowercase for a " + cc.YELLOW_BRIGHT + "yellow letter" + cc.RESET + 
+            "\n  type in UPPERCASE for a " + cc.GREEN_BRIGHT + "green letter" + cc.RESET);
+        System.out.println("For example: o" + cc.YELLOW_BRIGHT + "c" + cc.RESET + cc.GREEN_BRIGHT + "ea" + cc.RESET + 
+            "n, becomes \"?cEA?\".\n");
+        System.out.println("Let's try it!\n");
+
+        String tried = "";
+        String result = "";
 
         while (ww.getAttemptCount() <= 6) {
-            System.out.print(cc.RED_BOLD + "============ Attempt number " + ww.getAttemptCount() + " ============\n\n" + cc.RESET);
-            System.out.print("Type your " + ww.getAttemptOrdinal() + " word and result here: ");
-            String tried = scanner.next();
-            String result = scanner.next();
+            System.out.print(cc.CYAN_BOLD_BRIGHT + "============ Attempt number " + ww.getAttemptCount() + " ============\n\n" + cc.RESET);
 
-            List<String> resultWords = ww.attempt(tried, result);
+            while (true) {
+                System.out.print("First, type the word exactly as you entered it in wordle, in all lowercase: ");
+                tried = scanner.next().toLowerCase();
+
+                if (tried.length() != length) {
+                    cc.printColorWarning("It looks like the input you typed doesn't match the number of letters required. You need to have " + length + " letters. Try again.\n");
+                } else {
+                    break;
+                }
+            }
+
+            while (true) {
+                System.out.print("Now, type the result, using a '?' for " + cc.WHITE_UNDERLINED + 
+                    "gray letters" + cc.RESET + ", lowercase for " + cc.YELLOW_BRIGHT + "yellow" + cc.RESET + ", and UPPERCASE for " + 
+                    cc.GREEN_BRIGHT + "green: " + cc.RESET);
+                result = scanner.next();
+
+                if (result.length() != length) {
+                    cc.printColorWarning("It looks like the input you typed doesn't match the number of letters required. You need to have " + length + " letters. Try again.\n");
+                } else {
+                    break;
+                }
+            }
+
+            // Make sure both inputs are valid. If not, repeat the main loop.
+            if (!WordleWrangler.checkForEquality(tried, result)) {
+                cc.printColorWarning("It looks like your attempt and the result don't match. " +
+                    "They need to have all of the same letters, except that the result contains " +
+                    "question marks ('?') in place of the gray letters.\n");
+                continue;
+            }
+
+            if (!WordleWrangler.checkForIllegalCharacters(tried, result)) {
+                cc.printColorWarning("Only pass in lowercase characters, uppercase characters, " +
+                    "and the question mark ('?')");
+                continue;
+            }
+
+            Set<String> resultWords = ww.attempt(tried, result);
             int numResults = resultWords.size();
             LetterSlot[] slot = ww.getLetterSlots();
 
             System.out.println(" ");
             System.out.print("You tried '" + tried + "' and got ");
 
+            // Print out the colorized version of the results input
             for (int i = 0; i < ww.wordLength; i++) {
                 System.out.print(cc.colorSlot(slot[i]));
                 if (i == ww.wordLength - 1) System.out.print("\n\n");
@@ -85,6 +132,10 @@ public class WordleWrangler {
                 System.out.print(resultsIterator.next());
                 if (i != numResults - 1) System.out.print(", ");
                 if (i % 10 == 9) System.out.print("\n");
+                if (i >= ww.maxWordsToDisplay - 1) {
+                    System.out.println("Trimming output to just the first 100 words...");
+                    break;
+                }
             }
 
             System.out.print("\n\n");
@@ -94,17 +145,7 @@ public class WordleWrangler {
 
     }
 
-    public List<String> attempt(String tried, String result) {
-
-        if (tried.length() != wordLength)
-            throw new InvalidParameterException(
-                "The input '" + tried + "'' does not match the size of the word length " + wordLength + ". Try typing it again."
-            );
-
-        if (result.length() != wordLength)
-            throw new InvalidParameterException(
-                "The input '" + result + "'' does not match the size of the word length " + wordLength + ". Try typing it again."
-            );
+    public Set<String> attempt(String tried, String result) {
 
         String triedLower = tried.toLowerCase();
 
@@ -118,34 +159,48 @@ public class WordleWrangler {
             letterSlots[i].clear();
 
             if (cR == '?') {  // If the letter was gray
-                invalidCharacters.add(tried.charAt(i));
                 letterSlots[i].setLetter(cT);
+                letterHolder.addInvalid(cT);
             } else if (Character.isLowerCase(cR)) {  // If the letter was yellow
-                checkCharForEquality(cR, cT);
                 letterSlots[i].setLetter(cR);
                 letterSlots[i].setYellow();
+                letterHolder.addYellow(cR);
             } else if (Character.isUpperCase(cR)) {  // If the letter was green
-                checkCharForEquality(cR, cT);
                 letterSlots[i].setLetter(cR);
                 letterSlots[i].setGreen();
-            } else {  // Illegal character passed
-                throw new Error("Only pass in lowercase characters, uppercase characters, and the question mark (?).");
+                letterHolder.addGreen(cR);
             }
         }
 
-        return filterWords(tried, result);
+        return filterWords(triedLower);
     }
 
-    private void checkCharForEquality(char a, char b) {
-        if (Character.toLowerCase(a) != Character.toLowerCase(b)) {
-            throw new Error("The letters in the parameters do not correspond to one another. Try typing it again.");
+    public static boolean checkForEquality(String a, String b) {
+
+        if (a.length() != b.length()) return false;
+
+        for (int i = 0; i < a.length(); i++) {
+            if (b.charAt(i) == '?') continue;
+            if (a.charAt(i) != Character.toLowerCase(b.charAt(i))) return false;
         }
+
+        return true;
     }
 
-    public List<String> filterWords(String tried, String result) {
-        List<String> output = new ArrayList<>();
+    public static boolean checkForIllegalCharacters(String a, String b) {
 
-        Iterator<String> wordsIterable = words.iterator();
+        if (a.matches("[^a-zA-Z]")) return false;
+        if (b.matches("[^a-zA-Z\\?]")) return false;
+
+        return true;
+
+    }
+
+    public Set<String> filterWords(String tried) {
+        Set<String> output = new HashSet<>();
+
+        // Use the whole dictionary on the first pass. After that, only use the possible correct words.
+        Iterator<String> wordsIterable = possibleWords.isEmpty() ? words.iterator() : possibleWords.iterator();
 
         wordLoop:
         while (wordsIterable.hasNext()) {
@@ -182,12 +237,15 @@ public class WordleWrangler {
                 }
 
                 // Also check that the word doesn't contain a letter we've already tried before.
-                if (invalidCharacters.contains(word.charAt(i))) continue wordLoop;
+                if (letterHolder.getInvalidLetters().contains(word.charAt(i))) continue wordLoop;
             }
 
             // Finally, add the word to the output list, if it hasn't been tried yet.
-            if (!invalidWords.contains(word)) output.add(word);
+            if (!word.equals(tried)) output.add(word);
+            if (output.size() >= maxWordsToDisplay) break wordLoop;
         }
+
+        possibleWords = new HashSet<>(output);
 
         incrementAttemptCount();
 

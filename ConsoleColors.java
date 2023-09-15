@@ -84,4 +84,8 @@ public class ConsoleColors {
             return " ";
         }
     }
+
+    public void printColorWarning(String s) {
+        System.out.println(RED + s + RESET);
+    }
 }
